@@ -151,15 +151,22 @@ function renderChart(cfg){
     lo.width=cellW;
     lo.height=cellH;
     if(cols===1){
-      const margin=lo.margin||{}, plotH=Math.max(1,cellH-(margin.t||0)-(margin.b||0));
+      const margin=lo.margin={...(lo.margin||{}),t:30,b:90};
+      const plotH=Math.max(1,cellH-(margin.t||0)-(margin.b||0));
+      lo.font={...(lo.font||{}),size:9};
+      if(lo.title&&typeof lo.title==='object')lo.title.font={...(lo.title.font||{}),size:12};
+      if(lo.xaxis)lo.xaxis.tickfont={...(lo.xaxis.tickfont||{}),size:9};
+      if(lo.yaxis)lo.yaxis.tickfont={...(lo.yaxis.tickfont||{}),size:9};
+      if(lo.yaxis2)lo.yaxis2.tickfont={...(lo.yaxis2.tickfont||{}),size:9};
       if(lo.legend){
-        lo.legend.font={...(lo.legend.font||{}),size:10};
-        lo.legend.y=-0.28;
+        lo.legend.font={...(lo.legend.font||{}),size:9};
+        lo.legend.y=(74-(margin.b||0))/plotH;
         lo.legend.yanchor='top';
       }
       (lo.annotations||[]).forEach(a=>{
+        a.font={...(a.font||{}),size:8};
         if(typeof a.text==='string'&&a.text.startsWith('数据来源:')){
-          a.y=(18-(margin.b||0))/plotH;
+          a.y=(8-(margin.b||0))/plotH;
           a.yanchor='bottom';
         }
       });
@@ -168,7 +175,7 @@ function renderChart(cfg){
   }),60);
 }
 window.addEventListener('resize',()=>{if(currentGroups.length){renderChart(chartData[currentGroups[currentGroup].id]);}else{renderChart(null);}});
-const MODULE_DATA_VERSION = "5aa8fb44d822";
+const MODULE_DATA_VERSION = "244a92a1c4c7";
 const moduleDataPromises = new Map();
 let moduleRequestId = 0;
 function showModuleStatus(message){
@@ -183,7 +190,7 @@ async function loadModuleData(moduleIndex){
   const module=MODULES[moduleIndex];
   if(!module){throw new Error("Unknown module index: "+moduleIndex);}
   if(moduleDataPromises.has(module.id)){return moduleDataPromises.get(module.id);}
-  const expectedIds=module.subs.flatMap(sub=>sub.groups.map(group=>group.id));
+  const expectedIds=(module.no_sub?module.groups:module.subs.flatMap(sub=>sub.groups)).map(group=>group.id);
   const request=fetch("data/"+module.id+".json?v="+MODULE_DATA_VERSION)
     .then(response=>{if(!response.ok){throw new Error("HTTP "+response.status+" loading "+module.id);}return response.json();})
     .then(payload=>{
