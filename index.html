@@ -82,21 +82,29 @@ let currentModule = 0;
 let currentSub = 0;
 let currentGroup = 0;
 let currentGroups = [];
+let renderGeneration = 0;
+let renderTimer = null;
+let resizeTimer = null;
 function clampIndex(value, length){
   const n=Number.isInteger(value)?value:parseInt(value,10);
   if(!length){return 0;}
   return Number.isFinite(n)?Math.max(0,Math.min(length-1,n)):0;
 }
 function loadState(){
-  try{return JSON.parse(localStorage.getItem(STATE_KEY)||'{}');}
+  try{
+    const state=JSON.parse(localStorage.getItem(STATE_KEY)||'{}');
+    return state&&typeof state==='object'&&!Array.isArray(state)?state:{};
+  }
   catch(e){return {};}
 }
 function saveState(){
-  localStorage.setItem(STATE_KEY,JSON.stringify({module:currentModule,sub:currentSub,group:currentGroup}));
+  try{localStorage.setItem(STATE_KEY,JSON.stringify({module:currentModule,sub:currentSub,group:currentGroup}));}
+  catch(e){}
 }
 function buildNav(){
   const nav=document.getElementById('navBar');
   MODULES.forEach((m,i)=>{const d=document.createElement('button');d.type='button';d.className='nav-item';d.textContent=m.name;d.onclick=()=>selectModule(i,0,0);nav.appendChild(d);});
+  if(!MODULES.length){renderChart(null);return;}
   const state=loadState();
   selectModule(clampIndex(state.module,MODULES.length),state.sub,state.group);
 }
@@ -129,24 +137,48 @@ function selectGroup(k, groups=currentGroups){
   renderChart(chartData[groups[k].id]);
   saveState();
 }
+function purgeCharts(wrap){
+  if(!window.Plotly||typeof Plotly.purge!=='function'){return;}
+  wrap.querySelectorAll('.js-plotly-plot').forEach(node=>Plotly.purge(node));
+}
+function showChartError(target,generation,error){
+  if(generation!==renderGeneration||!target.isConnected){return;}
+  if(window.Plotly&&typeof Plotly.purge==='function'){Plotly.purge(target);}
+  const message=document.createElement('div');
+  message.className='empty';
+  message.textContent='图表加载失败';
+  target.replaceChildren(message);
+  if(error){console.error(error);}
+}
 function renderChart(cfg){
-  const wrap=document.getElementById('chartWrap'); wrap.innerHTML='';
+  const generation=++renderGeneration;
+  if(renderTimer!==null){clearTimeout(renderTimer);renderTimer=null;}
+  const wrap=document.getElementById('chartWrap');
+  purgeCharts(wrap);
+  wrap.replaceChildren();
   if(!cfg){wrap.innerHTML='<div class="empty">该模块图表待确认</div>';return;}
   let charts=[];
   if(cfg.charts){charts=cfg.charts.filter(c=>c&&c.data&&c.data.length);}
   else if(cfg.data){charts=[cfg];}
   if(!charts.length){wrap.innerHTML='<div class="empty">该图组暂无可用数据</div>';return;}
   const content=document.getElementById('contentWrap'), rect=content.getBoundingClientRect(), style=getComputedStyle(content);
-  const cw=Math.floor(rect.width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight));
-  const ch=Math.floor(rect.height-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom));
+  const cw=Math.max(1,Math.floor(rect.width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)));
+  const ch=Math.max(1,Math.floor(rect.height-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom)));
   const cols=cw<720?1:(cw<1120?2:3), visibleRows=2;
-  const gap=8, gridPad=4, cellW=Math.floor((cw-gridPad-gap*(cols-1))/cols), cellH=Math.max(260,Math.floor((ch-gap*(visibleRows-1))/visibleRows));
+  const gap=8, gridPad=4, cellW=Math.max(1,Math.floor((cw-gridPad-gap*(cols-1))/cols));
+  const halfHeight=Math.max(1,Math.floor((ch-gap*(visibleRows-1))/visibleRows));
+  const cellH=cols===1?halfHeight:Math.max(260,halfHeight);
   const grid=document.createElement('div');
   grid.className='chart-grid';
   grid.style.cssText='display:grid;grid-template-columns:repeat('+cols+','+cellW+'px);gap:'+gap+'px;width:'+cw+'px;max-height:'+ch+'px;padding-right:'+gridPad+'px;';
-  charts.forEach((_,i)=>{const c=document.createElement('div');c.id='chart_'+i;c.className='chart-cell';c.style.cssText='width:'+cellW+'px;height:'+cellH+'px;';grid.appendChild(c);});
+  const cells=charts.map((_,i)=>{const c=document.createElement('div');c.id='chart_'+generation+'_'+i;c.className='chart-cell';c.style.cssText='width:'+cellW+'px;height:'+cellH+'px;';grid.appendChild(c);return c;});
   wrap.appendChild(grid);
-  setTimeout(()=>charts.forEach((c,i)=>{
+  renderTimer=setTimeout(()=>{
+    renderTimer=null;
+    if(generation!==renderGeneration){return;}
+    charts.forEach((c,i)=>{
+    const target=cells[i];
+    if(!target||!target.isConnected||target.parentNode!==grid){return;}
     const lo=JSON.parse(JSON.stringify(c.layout||{}));
     lo.width=cellW;
     lo.height=cellH;
@@ -171,11 +203,27 @@ function renderChart(cfg){
         }
       });
     }
-    Plotly.newPlot('chart_'+i,c.data,lo,{displayModeBar:false,responsive:true});
-  }),60);
+    if(!window.Plotly||typeof Plotly.newPlot!=='function'){
+      showChartError(target,generation,new Error('Plotly 未加载'));
+      return;
+    }
+    try{
+      const result=Plotly.newPlot(target,c.data,lo,{displayModeBar:false,responsive:false});
+      if(result&&typeof result.catch==='function'){
+        result.catch(error=>showChartError(target,generation,error));
+      }
+    }catch(error){showChartError(target,generation,error);}
+  });
+  },60);
 }
-window.addEventListener('resize',()=>{if(currentGroups.length){renderChart(chartData[currentGroups[currentGroup].id]);}else{renderChart(null);}});
-const MODULE_DATA_VERSION = "24be45e74523";
+window.addEventListener('resize',()=>{
+  if(resizeTimer!==null){clearTimeout(resizeTimer);}
+  resizeTimer=setTimeout(()=>{
+    resizeTimer=null;
+    if(currentGroups.length){renderChart(chartData[currentGroups[currentGroup].id]);}else{renderChart(null);}
+  },150);
+});
+const MODULE_DATA_VERSION = "9e6e2d9e1541";
 const moduleDataPromises = new Map();
 let moduleRequestId = 0;
 function showModuleStatus(message){
