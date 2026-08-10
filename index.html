@@ -175,6 +175,27 @@ function showChartError(target,generation,error){
   target.replaceChildren(message);
   if(error){console.error(error);}
 }
+function stackChartFooter(target,layout,cellH){
+  const annotations=(layout.annotations||[]).map(annotation=>({...annotation}));
+  const sourceIndex=annotations.findIndex(annotation=>typeof annotation.text==='string'&&annotation.text.startsWith('数据来源:'));
+  const legend=target.querySelector('g.legend');
+  const sourceText=[...target.querySelectorAll('text')].find(node=>(node.textContent||'').trim().startsWith('数据来源:'));
+  if(sourceIndex<0||!legend||!sourceText){target.dataset.footerReady='true';return Promise.resolve();}
+  const legendHeight=Math.ceil(legend.getBoundingClientRect().height);
+  const sourceHeight=Math.ceil(sourceText.getBoundingClientRect().height);
+  const sourceBottom=8, gap=8;
+  const legendTop=sourceBottom+sourceHeight+gap+legendHeight;
+  const margin={...(layout.margin||{})};
+  margin.b=Math.max(margin.b||0,legendTop+2);
+  const plotH=Math.max(1,cellH-(margin.t||0)-margin.b);
+  annotations[sourceIndex]={...annotations[sourceIndex],y:(sourceBottom-margin.b)/plotH,yanchor:'bottom'};
+  return Plotly.relayout(target,{
+    'margin.b':margin.b,
+    'legend.y':(legendTop-margin.b)/plotH,
+    'legend.yanchor':'top',
+    annotations,
+  }).then(()=>{target.dataset.footerReady='true';});
+}
 function enablePointerDrag(scroller){
   let drag=null;
   scroller.addEventListener('pointerdown',event=>{
@@ -308,7 +329,9 @@ function renderChart(cfg){
     lo.width=cellW;
     lo.height=cellH;
     if(cols===1){
-      const margin=lo.margin={...(lo.margin||{}),t:30,b:90};
+      const requestedBottom=Number(lo.meta&&lo.meta.mobileBottomMargin);
+      const mobileBottom=Number.isFinite(requestedBottom)?Math.max(84,requestedBottom):84;
+      const margin=lo.margin={...(lo.margin||{}),t:34,b:mobileBottom};
       const plotH=Math.max(1,cellH-(margin.t||0)-(margin.b||0));
       lo.font={...(lo.font||{}),size:9};
       if(lo.title&&typeof lo.title==='object')lo.title.font={...(lo.title.font||{}),size:12};
@@ -317,7 +340,7 @@ function renderChart(cfg){
       if(lo.yaxis2)lo.yaxis2.tickfont={...(lo.yaxis2.tickfont||{}),size:9};
       if(lo.legend){
         lo.legend.font={...(lo.legend.font||{}),size:9};
-        lo.legend.y=(74-(margin.b||0))/plotH;
+        lo.legend.y=(60-(margin.b||0))/plotH;
         lo.legend.yanchor='top';
       }
       (lo.annotations||[]).forEach(a=>{
@@ -333,10 +356,11 @@ function renderChart(cfg){
       return;
     }
     try{
+      target.dataset.footerReady='false';
       const result=Plotly.newPlot(target,c.data,lo,{displayModeBar:false,responsive:false});
-      if(result&&typeof result.catch==='function'){
-        result.catch(error=>showChartError(target,generation,error));
-      }
+      Promise.resolve(result)
+        .then(()=>stackChartFooter(target,lo,cellH))
+        .catch(error=>showChartError(target,generation,error));
     }catch(error){showChartError(target,generation,error);}
   });
   },60);
@@ -348,7 +372,7 @@ window.addEventListener('resize',()=>{
     if(currentGroups.length){renderChart(chartData[currentGroups[currentGroup].id]);}else{renderChart(null);}
   },150);
 });
-const MODULE_DATA_VERSION = "75d3c892be29";
+const MODULE_DATA_VERSION = "b21f8c7054ed";
 const moduleDataPromises = new Map();
 let moduleRequestId = 0;
 function showModuleStatus(message){
